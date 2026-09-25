@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>龍脊 VR 行山體驗</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    body, html { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: sans-serif; }
+    #view { width: 100vw; height: 100vh; display: block; }
+    
+    #hud {
+      position: fixed; top: 12px; left: 12px; z-index: 99;
+      background: rgba(0,0,0,0.75); color: #fff; padding: 12px 16px;
+      border-radius: 12px; font-size: 13px; line-height: 1.5;
+      backdrop-filter: blur(5px); pointer-events: none;
+    }
+    #gyro-btn {
+      position: fixed; top: 12px; right: 12px; z-index: 99;
+      background: #0288d1; color: #fff; border: none; padding: 10px 16px;
+      border-radius: 20px; font-weight: bold; font-size: 13px; cursor: pointer;
+    }
+    
+    .ctrl-box {
+      position: fixed; bottom: 25px; left: 20px; z-index: 99;
+      display: grid; grid-template-columns: repeat(3, 52px); grid-template-rows: repeat(3, 52px); gap: 6px;
+    }
+    .btn {
+      background: rgba(255,255,255,0.3); border: 2px solid #fff;
+      color: #fff; font-size: 22px; font-weight: bold;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 12px; touch-action: manipulation;
+    }
+    .btn:active { background: rgba(0, 200, 255, 0.7); }
+    #u { grid-column: 2; grid-row: 1; }
+    #l { grid-column: 1; grid-row: 2; }
+    #r { grid-column: 3; grid-row: 2; }
+    #d { grid-column: 2; grid-row: 3; }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+  <div id="hud">
+    <b>📍 香港龍脊 (Dragon's Back) VR 體驗</b><br>
+    景點：打爛埕頂山 (標高 284m)<br>
+    <span id="status" style="color:#00ff88;">使用方向鍵行山，轉動手機觀看風景</span>
+  </div>
+
+  <button id="gyro-btn" onclick="enableGyro()">開啟陀螺儀/VR觀看</button>
+
+  <div class="ctrl-box">
+    <div class="btn" id="u">▲</div>
+    <div class="btn" id="l">◄</div>
+    <div class="btn" id="r">►</div>
+    <div class="btn" id="d">▼</div>
+  </div>
+
+  <canvas id="view"></canvas>
+
+  <script>
+    let scene, camera, renderer;
+    let move = { f: false, b: false, l: false, r: false };
+    let playerPos = { x: 0, z: 0 };
+
+    function init() {
+      const canvas = document.getElementById('view');
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x87CEEB); // 藍天
+      scene.fog = new THREE.FogExp2(0x87CEEB, 0.015); // 近大遠小的遠山霧氣
+
+      camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+      camera.position.set(0, 1.7, 0); // 模擬人類視角高度 1.7m
+
+      renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+
+      // 光照系統
+      const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+      sun.position.set(20, 40, 20);
+      scene.add(sun);
+      scene.add(new THREE.AmbientLight(0x777777));
+
+      // 1. 建立龍脊主山脊 (Ridge Trail)
+      const pathGeo = new THREE.BoxGeometry(3, 0.2, 200);
+      const pathMat = new THREE.MeshLambertMaterial({ color: 0x8d6e63 }); // 土路泥土色
+      const path = new THREE.Mesh(pathGeo, pathMat);
+      path.position.set(0, -0.1, -90);
+      scene.add(path);
+
+      // 2. 建立打爛埕頂山山峰 (Mountain Peak)
+      const mountainGeo = new THREE.ConeGeometry(60, 40, 32);
+      const mountainMat = new THREE.MeshLambertMaterial({ color: 0x386641 }); // 山林綠色
+      const mountain = new THREE.Mesh(mountainGeo, mountainMat);
+      mountain.position.set(0, -18, -30);
+      scene.add(mountain);
+
+      // 連綿連山 (遠景)
+      const m2 = new THREE.Mesh(mountainGeo, mountainMat);
+      m2.position.set(40, -22, -80);
+      scene.add(m2);
+
+      // 3. 建立遠處海洋 (石澳 / 大浪灣)
+      const seaGeo = new THREE.PlaneGeometry(1000, 1000);
+      const seaMat = new THREE.MeshBasicMaterial({ color: 0x1a535c });
+      const sea = new THREE.Mesh(seaGeo, seaMat);
+      sea.rotation.x = -Math.PI / 2;
+      sea.position.set(0, -25, 0);
+      scene.add(sea);
+
+      // 4. 打爛埕頂山標高柱 (Trig Station)
+      const trigBaseGeo = new THREE.CylinderGeometry(0.2, 0.2, 1.2, 16);
+      const trigBaseMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+      const trigBase = new THREE.Mesh(trigBaseGeo, trigBaseMat);
+      trigBase.position.set(0, 0.6, -10);
+      scene.add(trigBase);
+
+      const trigTopGeo = new THREE.CylinderGeometry(0.22, 0.22, 0.3, 16);
+      const trigTopMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
+      const trigTop = new THREE.Mesh(trigTopGeo, trigTopMat);
+      trigTop.position.set(0, 1.1, -10);
+      scene.add(trigTop);
+
+      bindControls();
+      animate();
+    }
+
+    function bindControls() {
+      const setup = (id, key) => {
+        const el = document.getElementById(id);
+        el.addEventListener('touchstart', (e) => { e.preventDefault(); move[key] = true; });
+        el.addEventListener('touchend', (e) => { e.preventDefault(); move[key] = false; });
+        el.addEventListener('mousedown', () => move[key] = true);
+        el.addEventListener('mouseup', () => move[key] = false);
+      };
+      setup('u', 'f'); setup('d', 'b'); setup('l', 'l'); setup('r', 'r');
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const speed = 0.12;
+      
+      // 計算方向與移動
+      if (move.f) camera.translateZ(-speed);
+      if (move.b) camera.translateZ(speed);
+      if (move.l) camera.translateX(-speed);
+      if (move.r) camera.translateX(speed);
+
+      // 保持人眼高度
+      camera.position.y = 1.7;
+
+      renderer.render(scene, camera);
+    }
+
+    function enableGyro() {
+      if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        DeviceOrientationEvent.requestPermission().then(res => {
+          if (res === 'granted') window.addEventListener('deviceorientation', handleGyro);
+        });
+      } else {
+        window.addEventListener('deviceorientation', handleGyro);
+      }
+    }
+
+    function handleGyro(e) {
+      if (e.alpha && e.beta) {
+        camera.rotation.y = THREE.MathUtils.degToRad(e.alpha);
+        camera.rotation.x = THREE.MathUtils.degToRad(e.beta - 45);
+      }
+    }
+
+    window.onload = init;
+  </script>
+</body>
+</html>
