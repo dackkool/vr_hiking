@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>香港龍脊真實 3D VR 行山體驗</title>
+
+  <!-- 自動載入 Cesium 3D 實景地圖引擎 (無需安裝) -->
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Cesium.js"></script>
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    html, body, #cesiumContainer { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: sans-serif; }
+
+    /* 抬頭顯示器 HUD */
+    #hud {
+      position: fixed; top: 12px; left: 12px; z-index: 999;
+      background: rgba(0, 0, 0, 0.8); color: #fff; padding: 12px 16px;
+      border-radius: 12px; font-size: 13px; line-height: 1.6;
+      backdrop-filter: blur(5px); box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+    }
+
+    /* 前後左右方向按鈕 (電腦/手機皆可用) */
+    .controls {
+      position: fixed; bottom: 25px; left: 20px; z-index: 999;
+      display: grid; grid-template-columns: repeat(3, 50px); grid-template-rows: repeat(3, 50px); gap: 6px;
+    }
+    .btn {
+      background: rgba(255, 255, 255, 0.25); border: 2px solid #fff;
+      color: white; font-size: 20px; font-weight: bold;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 12px; touch-action: manipulation; backdrop-filter: blur(4px);
+      cursor: pointer;
+    }
+    .btn:active { background: rgba(0, 200, 255, 0.8); }
+    #btn-u { grid-column: 2; grid-row: 1; }
+    #btn-l { grid-column: 1; grid-row: 2; }
+    #btn-r { grid-column: 3; grid-row: 2; }
+    #btn-d { grid-column: 2; grid-row: 3; }
+  </style>
+</head>
+<body>
+
+  <!-- 抬頭顯示器 -->
+  <div id="hud">
+    <b>📍 香港龍脊 (Dragon's Back) 實景 VR</b><br>
+    標高：打爛埕頂山 (284 米)<br>
+    控制：按鈕/鍵盤 WASD 移動 | 滑鼠拖曳旋轉視角
+  </div>
+
+  <!-- 十字方向鍵 -->
+  <div class="controls">
+    <div class="btn" id="btn-u">▲</div>
+    <div class="btn" id="btn-l">◄</div>
+    <div class="btn" id="btn-r">►</div>
+    <div class="btn" id="btn-d">▼</div>
+  </div>
+
+  <!-- 3D 視窗畫布 -->
+  <div id="cesiumContainer"></div>
+
+  <script>
+    // ⚠️ 關鍵步驟：請將下面的 YOUR_CESIUM_TOKEN 替換為你在第一步複製的免費 Token ⚠️
+    Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJub25jZSI6Im1XckF5T2RaNG5QbEEzWGIiLCJqdGkiOiJhZThlOTdhMy0zOGYyLTQxY2EtOTU3YS0xYTVjYWM4ODdmYWEiLCJpZCI6NTA3Mzc1LCJzdWIiOiJkYWNra29vbCIsImlzcyI6Imh0dHBzOi8vYXBpLmNlc2l1bS5jb20iLCJhdWQiOiJVbnRpdGxlZCIsImlhdCI6MTc5MDMyOTUyNX0.Nslgm1XCa91xOEaAqb9l0iOFnkyyez9yyjN-ENJ53kI';
+
+    // 1. 初始化 3D 地球視窗
+    const viewer = new Cesium.Viewer('cesiumContainer', {
+      animation: false,
+      timeline: false,
+      baseLayerPicker: false,
+      geocoder: false,
+      homeButton: false,
+      sceneModePicker: false,
+      navigationHelpButton: false,
+      infoBox: false,
+      selectionIndicator: false
+    });
+
+    // 啟用高精度真實太陽光影
+    viewer.scene.globe.enableLighting = true;
+
+    // 2. 載入 Google 實景 3D Tiles (包含真實照片質感的龍脊山體與植物)
+    async function loadPhotorealistic3DTiles() {
+      try {
+        const tileset = await Cesium.createGooglePhotorealistic3DTileset();
+        viewer.scene.primitives.add(tileset);
+      } catch (error) {
+        console.error("3D 實景模型載入失敗:", error);
+      }
+    }
+    loadPhotorealistic3DTiles();
+
+    // 3. 將攝影機定位至龍脊山頂路段 (北緯 22.2361°, 東經 114.2381°, 高度約 286 米，視角面向北)
+    viewer.camera.setView({
+      destination: Cesium.Cartesian3.fromDegrees(114.2381, 22.2355, 286.0),
+      orientation: {
+        heading: Cesium.Math.toRadians(10.0),  // 朝向正北稍微偏東
+        pitch: Cesium.Math.toRadians(-5.0),    // 平視角度，模擬第一人稱眼睛高度
+        roll: 0.0
+      }
+    });
+
+    // 4. 在山頂設置標高柱與景點標示牌
+    viewer.entities.add({
+      position: Cesium.Cartesian3.fromDegrees(114.2381, 22.2361, 284.5),
+      point: { pixelSize: 8, color: Cesium.Color.RED },
+      label: {
+        text: "📍 打爛埕頂山 Peak (284m)",
+        font: "14px bold sans-serif",
+        fillColor: Cesium.Color.WHITE,
+        outlineColor: Cesium.Color.BLACK,
+        outlineWidth: 3,
+        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+        pixelOffset: new Cesium.Cartesian2(0, -12)
+      }
+    });
+
+    // 5. 行山移動控制邏輯 (支援方向按鈕與鍵盤 WASD)
+    let moveSpeed = 3.0; // 移動步距 (米)
+    let keys = { f: false, b: false, l: false, r: false };
+
+    function bindBtn(id, dir) {
+      const el = document.getElementById(id);
+      const start = (e) => { e.preventDefault(); keys[dir] = true; };
+      const end = (e) => { e.preventDefault(); keys[dir] = false; };
+      el.addEventListener('mousedown', start);
+      el.addEventListener('mouseup', end);
+      el.addEventListener('touchstart', start, { passive: false });
+      el.addEventListener('touchend', end, { passive: false });
+    }
+
+    bindBtn('btn-u', 'f');
+    bindBtn('btn-d', 'b');
+    bindBtn('btn-l', 'l');
+    bindBtn('btn-r', 'r');
+
+    // 鍵盤 WASD / 方向鍵相容
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'w' || e.key === 'ArrowUp') keys.f = true;
+      if (e.key === 's' || e.key === 'ArrowDown') keys.b = true;
+      if (e.key === 'a' || e.key === 'ArrowLeft') keys.l = true;
+      if (e.key === 'd' || e.key === 'ArrowRight') keys.r = true;
+    });
+    window.addEventListener('keyup', (e) => {
+      if (e.key === 'w' || e.key === 'ArrowUp') keys.f = false;
+      if (e.key === 's' || e.key === 'ArrowDown') keys.b = false;
+      if (e.key === 'a' || e.key === 'ArrowLeft') keys.l = false;
+      if (e.key === 'd' || e.key === 'ArrowRight') keys.r = false;
+    });
+
+    // 每一幀即時計算位置
+    viewer.clock.onTick.addEventListener(() => {
+      const camera = viewer.camera;
+      if (keys.f) camera.moveForward(moveSpeed);
+      if (keys.b) camera.moveBackward(moveSpeed);
+      if (keys.l) camera.moveLeft(moveSpeed);
+      if (keys.r) camera.moveRight(moveSpeed);
+    });
+  </script>
+</body>
+</html>
