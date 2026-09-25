@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>龍脊第一人稱 1.9m 陀螺儀 VR 行山</title>
+
+  <!-- 載入 Cesium 3D 實景引擎 -->
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Cesium.js"></script>
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    html, body, #cesiumContainer { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: sans-serif; }
+
+    /* HUD 介面 */
+    #hud {
+      position: fixed; top: 12px; left: 12px; z-index: 999;
+      background: rgba(0, 0, 0, 0.75); color: #fff; padding: 10px 14px;
+      border-radius: 10px; font-size: 12px; line-height: 1.5;
+      backdrop-filter: blur(4px); pointer-events: none;
+    }
+
+    /* 手機陀螺儀啟動按鈕 */
+    #gyroBtn {
+      position: fixed; top: 12px; right: 12px; z-index: 999;
+      background: #007aff; color: white; border: none; padding: 10px 14px;
+      border-radius: 8px; font-weight: bold; font-size: 13px; cursor: pointer;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+    }
+
+    /* 前後移動控制鈕 (第一人稱踏步) */
+    .controls {
+      position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 999;
+      display: flex; gap: 20px;
+    }
+    .btn {
+      width: 65px; height: 65px; background: rgba(255, 255, 255, 0.3);
+      border: 2px solid #fff; color: white; font-size: 24px; font-weight: bold;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 50%; touch-action: manipulation; backdrop-filter: blur(5px);
+      cursor: pointer;
+    }
+    .btn:active { background: rgba(0, 200, 255, 0.8); }
+  </style>
+</head>
+<body>
+
+  <div id="hud">
+    <b>📍 栢架山起點 </b><br>
+    視點高度：1.9 米 (第一人稱)<br>
+    轉動手機：體感環顧 | 按鈕：前後前進
+  </div>
+
+  <button id="gyroBtn">📱 啟用陀螺儀觀看</button>
+
+  <div class="controls">
+    <div class="btn" id="btn-f">▲</div>
+    <div class="btn" id="btn-b">▼</div>
+  </div>
+
+  <div id="cesiumContainer"></div>
+
+  <script>
+    // ⚠️ 關鍵步驟：請填入你在 Cesium ion 申請的免費 Token ⚠️
+    Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJub25jZSI6Im1XckF5T2RaNG5QbEEzWGIiLCJqdGkiOiJhZThlOTdhMy0zOGYyLTQxY2EtOTU3YS0xYTVjYWM4ODdmYWEiLCJpZCI6NTA3Mzc1LCJzdWIiOiJkYWNra29vbCIsImlzcyI6Imh0dHBzOi8vYXBpLmNlc2l1bS5jb20iLCJhdWQiOiJVbnRpdGxlZCIsImlhdCI6MTc5MDMyOTUyNX0.Nslgm1XCa91xOEaAqb9l0iOFnkyyez9yyjN-ENJ53kI';
+
+    const viewer = new Cesium.Viewer('cesiumContainer', {
+      animation: false,
+      timeline: false,
+      baseLayerPicker: false,
+      geocoder: false,
+      homeButton: false,
+      sceneModePicker: false,
+      navigationHelpButton: false,
+      infoBox: false,
+      selectionIndicator: false
+    });
+
+    // 關閉預設相機控制（避免與陀螺儀衝突）
+    viewer.scene.screenSpaceCameraController.enableRotate = true;
+    viewer.scene.screenSpaceCameraController.enableZoom = false;
+
+    // 1. 載入 Google 實景 3D 地圖
+    async function init3D() {
+      try {
+        const tileset = await Cesium.createGooglePhotorealistic3DTileset();
+        viewer.scene.primitives.add(tileset);
+      } catch (err) {
+        console.error("3D 載入失敗:", err);
+      }
+    }
+    init3D();
+
+        // 2. 精確定位至「鰂魚涌柏架山道山徑入口」
+    let playerLon = 114.20980; 
+    let playerLat = 22.28580;
+    const eyeHeight = 2.0; // 2 米第一人稱視角
+
+    let gyroHeading = 180.0; // 面向南方山頂方向
+    let gyroPitch = 5.0;    // 微微向下看山徑
+    let currentSpeed = 0.0;
+
+
+    // 精確貼地定位函式 (維持地面 + 1.7m)
+    function updateCameraPosition() {
+      const cartographic = Cesium.Cartographic.fromDegrees(playerLon, playerLat);
+      // 自動獲取目前座標的真實地面高度
+      const terrainHeight = viewer.scene.sampleHeight(cartographic) || 90.0; 
+
+      viewer.camera.setView({
+        destination: Cesium.Cartesian3.fromDegrees(playerLon, playerLat, terrainHeight + eyeHeight),
+        orientation: {
+          heading: Cesium.Math.toRadians(currentHeading),
+          pitch: Cesium.Math.toRadians(currentPitch),
+          roll: 0.0
+        }
+      });
+    }
+
+    // 初次載入定位至起點
+    setTimeout(updateCameraPosition, 1500);
+
+    // 3. 手機陀螺儀感應控制 (Device Orientation)
+    function handleOrientation(event) {
+      if (event.alpha === null || event.beta === null) return;
+
+      // alpha: 0 ~ 360 度 (指南針方向)
+      // beta: -180 ~ 180 度 (前後傾斜)
+      currentHeading = 360 - event.alpha; 
+      currentPitch = event.beta - 90; // 將手機直立時設為平視 (0度)
+
+      // 限制抬頭俯視角度，避免畫面顛倒
+      if (currentPitch > 85) currentPitch = 85;
+      if (currentPitch < -85) currentPitch = -85;
+
+      updateCameraPosition();
+    }
+
+    // 請求 iOS 13+ 陀螺儀權限
+    document.getElementById('gyroBtn').addEventListener('click', function() {
+      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        DeviceOrientationEvent.requestPermission()
+          .then(response => {
+            if (response === 'granted') {
+              window.addEventListener('deviceorientation', handleOrientation, true);
+              this.style.display = 'none';
+            } else {
+              alert('需要允許陀螺儀權限才能體驗體感視角！');
+            }
+          })
+          .catch(console.error);
+      } else {
+        // Android 或一般瀏覽器直接監聽
+        window.addEventListener('deviceorientation', handleOrientation, true);
+        this.style.display = 'none';
+      }
+    });
+
+    // 4. 第一人稱移動邏輯 (前進/後退)
+    let isMovingForward = false;
+    let isMovingBackward = false;
+    const moveStep = 0.000015; // 每次踏步距離 (約 1.5 米)
+
+    function bindMoveBtn(id, isForward) {
+      const el = document.getElementById(id);
+      const start = (e) => { 
+        e.preventDefault(); 
+        if(isForward) isMovingForward = true; else isMovingBackward = true; 
+      };
+      const end = (e) => { 
+        e.preventDefault(); 
+        if(isForward) isMovingForward = false; else isMovingBackward = false; 
+      };
+      el.addEventListener('touchstart', start, { passive: false });
+      el.addEventListener('touchend', end, { passive: false });
+      el.addEventListener('mousedown', start);
+      el.addEventListener('mouseup', end);
+    }
+
+    bindMoveBtn('btn-f', true);
+    bindMoveBtn('btn-b', false);
+
+    // 每一幀移動邏輯
+    viewer.clock.onTick.addEventListener(() => {
+      if (isMovingForward || isMovingBackward) {
+        const rad = Cesium.Math.toRadians(currentHeading);
+        const dir = isMovingForward ? 1 : -1;
+
+        // 根據目前面向的角度往前/往後走
+        playerLon += Math.sin(rad) * moveStep * dir;
+        playerLat += Math.cos(rad) * moveStep * dir;
+
+        updateCameraPosition();
+      }
+    });
+  </script>
+</body>
+</html>
