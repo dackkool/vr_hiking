@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>龍脊 2m VR - 陀螺儀視角 + 改裝滑鼠前後驅動</title>
+
+  <!-- 載入 Cesium 3D 實景地圖引擎 -->
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Cesium.js"></script>
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    html, body, #cesiumContainer { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: sans-serif; }
+
+    /* HUD 資訊欄 */
+    #hud {
+      position: fixed; top: 12px; left: 12px; z-index: 999;
+      background: rgba(0, 0, 0, 0.85); color: #fff; padding: 12px 16px;
+      border-radius: 12px; font-size: 13px; line-height: 1.6;
+      backdrop-filter: blur(5px); pointer-events: none;
+    }
+
+    /* 啟用/控制按鈕 */
+    .btn-panel {
+      position: fixed; top: 12px; right: 12px; z-index: 999;
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    .action-btn {
+      background: #007aff; color: white; border: none; padding: 10px 14px;
+      border-radius: 8px; font-weight: bold; font-size: 12px; cursor: pointer;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+    }
+    #mouseBtn { background: #28a745; }
+  </style>
+</head>
+<body>
+
+  <div id="hud">
+    <b>📍 龍脊 2m 實景 VR (雙感應器驅動)</b><br>
+    視角的像 VR：轉動手機看四周<br>
+    前後移動：腳踩/轉動改裝滑鼠<br>
+    即時時速：<span id="speedTxt" style="color:#00ff00; font-weight:bold;">0.0 km/h</span>
+  </div>
+
+  <div class="btn-panel">
+    <button id="gyroBtn" class="action-btn">📱 1. 啟用陀螺儀 VR 視角</button>
+    <button id="mouseBtn" class="action-btn">🖱️ 2. 鎖定改裝滑鼠感應器</button>
+  </div>
+
+  <div id="cesiumContainer"></div>
+
+  <script>
+    // ⚠️ 請填入你在 Cesium Ion 申請的免費 Token ⚠️
+    Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJub25jZSI6Im1XckF5T2RaNG5QbEEzWGIiLCJqdGkiOiJhZThlOTdhMy0zOGYyLTQxY2EtOTU3YS0xYTVjYWM4ODdmYWEiLCJpZCI6NTA3Mzc1LCJzdWIiOiJkYWNra29vbCIsImlzcyI6Imh0dHBzOi8vYXBpLmNlc2l1bS5jb20iLCJhdWQiOiJVbnRpdGxlZCIsImlhdCI6MTc5MDMyOTUyNX0.Nslgm1XCa91xOEaAqb9l0iOFnkyyez9yyjN-ENJ53kI';
+
+    const viewer = new Cesium.Viewer('cesiumContainer', {
+      animation: false, timeline: false, baseLayerPicker: false,
+      geocoder: false, homeButton: false, sceneModePicker: false,
+      navigationHelpButton: false, infoBox: false, selectionIndicator: false
+    });
+
+    // 關閉預設觸控控制，交給陀螺儀與滑鼠
+    viewer.scene.screenSpaceCameraController.enableRotate = false;
+    viewer.scene.screenSpaceCameraController.enableZoom = false;
+
+    // 1. 載入 Google 實景 3D Tiles
+    async function init3D() {
+      try {
+        const tileset = await Cesium.createGooglePhotorealistic3DTileset();
+        viewer.scene.primitives.add(tileset);
+      } catch (err) { console.error("3D 載入失敗:", err); }
+    }
+    init3D();
+
+    // 2. 玩家初始位置（土地灣入口）、視角高度 2 米
+    let playerLon = 114.2386; 
+    let playerLat = 22.2281;
+    const eyeHeight = 2.0; // 固定 2.0 米第一人稱視角
+
+    let gyroHeading = 10.0; // 由陀螺儀控制左右航向
+    let gyroPitch = 0.0;    // 由陀螺儀控制上下俯仰
+    let currentSpeed = 0.0; // 由改裝滑鼠控制前進速度
+
+    // 自動計算貼地高度並更新攝影機
+    function updateCamera() {
+      const cartographic = Cesium.Cartographic.fromDegrees(playerLon, playerLat);
+      const terrainHeight = viewer.scene.sampleHeight(cartographic) || 90.0;
+
+      viewer.camera.setView({
+        destination: Cesium.Cartesian3.fromDegrees(playerLon, playerLat, terrainHeight + eyeHeight),
+        orientation: {
+          heading: Cesium.Math.toRadians(gyroHeading),
+          pitch: Cesium.Math.toRadians(gyroPitch),
+          roll: 0.0
+        }
+      });
+    }
+    setTimeout(updateCamera, 1500);
+
+    // 3. 【手機陀螺儀】控制 360 度 VR 視角
+    function handleOrientation(event) {
+      if (event.alpha === null || event.beta === null) return;
+
+      // alpha (0 ~ 360度)：身體旋轉指南針方向
+      // beta (-180 ~ 180度)：手機前後傾斜 (抬頭/俯視)
+      gyroHeading = 360 - event.alpha;
+      gyroPitch = event.beta - 90; // 將手機直立持握時設為平視 (0度)
+
+      // 限制抬頭俯視角度，避免畫面顛倒
+      if (gyroPitch > 85) gyroPitch = 85;
+      if (gyroPitch < -85) gyroPitch = -85;
+
+      updateCamera();
+    }
+
+    // 啟用陀螺儀權限（相容 iOS / Android）
+    document.getElementById('gyroBtn').addEventListener('click', function() {
+      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        DeviceOrientationEvent.requestPermission()
+          .then(resp => {
+            if (resp === 'granted') {
+              window.addEventListener('deviceorientation', handleOrientation, true);
+              this.style.display = 'none';
+            } else { alert('需要陀螺儀權限才能體驗 VR 視角！'); }
+          }).catch(console.error);
+      } else {
+        window.addEventListener('deviceorientation', handleOrientation, true);
+        this.style.display = 'none';
+      }
+    });
+
+    // 4. 【改裝滑鼠】控制前進/後退速度
+    const mouseBtn = document.getElementById('mouseBtn');
+    mouseBtn.addEventListener('click', () => {
+      document.body.requestPointerLock();
+    });
+
+    document.addEventListener('pointerlockchange', () => {
+      if (document.pointerLockElement === document.body) {
+        mouseBtn.style.display = 'none';
+      } else {
+        mouseBtn.style.display = 'block';
+      }
+    });
+
+    // 監聽滑鼠感應器位移 (Y 軸位移轉化為踩踏前進動能)
+    document.addEventListener('mousemove', (e) => {
+      if (document.pointerLockElement !== document.body) return;
+
+      let deltaMove = Math.abs(e.movementY) + Math.abs(e.movementX);
+
+      if (deltaMove > 0) {
+        // 增加前進動能
+        currentSpeed += deltaMove * 0.0000002;
+        
+        // 設定最高限速
+        if (currentSpeed > 0.00005) currentSpeed = 0.00005;
+      }
+    });
+
+    // 5. 遊戲物理循環 (自然阻力與前進)
+    const speedTxt = document.getElementById('speedTxt');
+
+    viewer.clock.onTick.addEventListener(() => {
+      if (currentSpeed > 0.0000001) {
+        const rad = Cesium.Math.toRadians(gyroHeading);
+        
+        // 順著陀螺儀目前面向的方向往前走 (貼地)
+        playerLon += Math.sin(rad) * currentSpeed;
+        playerLat += Math.cos(rad) * currentSpeed;
+
+        updateCamera();
+
+        // 顯示速度
+        let kmh = (currentSpeed * 1000000 * 3.6).toFixed(1);
+        speedTxt.innerText = `${kmh} km/h`;
+
+        // 慣性減速 (腳停下來時緩慢煞車)
+        currentSpeed *= 0.88;
+      } else {
+        speedTxt.innerText = `0.0 km/h`;
+      }
+    });
+  </script>
+</body>
+</html>
