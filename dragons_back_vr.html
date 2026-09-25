@@ -92,13 +92,15 @@
     }
     init3D();
 
-    // 2. 龍脊起點座標 (土地灣 To Tei Wan 入口: 22.2281° N, 114.2386° E)
-    let playerLon = 114.2386;
-    let playerLat = 22.2281;
-    const eyeHeight = 1.9; // 人高 1.9 米
+        // 2. 龍脊山徑泥路入口 (精確避開石澳道車路)
+    // 座標已定位於土地灣階梯上方的山徑泥路段
+    let playerLon = 114.23810; 
+    let playerLat = 22.22855;
+    const eyeHeight = 2.0; // 固定 2 米視角高度
 
-    let currentHeading = 0; // 航向角 (左右旋轉)
-    let currentPitch = 0;   // 俯仰角 (上下抬頭)
+    let gyroHeading = 15.0; // 初始航向：順著山徑小路朝東北山頂看
+    let gyroPitch = 5.0;   // 微微向下看腳下的泥路與石階
+    let currentSpeed = 0.0;
 
     // 精確貼地定位函式 (維持地面 + 1.7m)
     function updateCameraPosition() {
