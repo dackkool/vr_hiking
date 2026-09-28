@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sky 100 天際線起飛 - DIY 體感木棍滑翔機</title>
+
+  <!-- 載入 Cesium 3D 實景引擎 -->
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Cesium.js"></script>
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+
+  <!-- 載入 Google MediaPipe Hands 手部/木棍角度追蹤 -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    html, body, #cesiumContainer { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: sans-serif; }
+
+    /* 高空飛行儀表板 HUD */
+    #hud {
+      position: fixed; top: 16px; left: 16px; z-index: 999;
+      background: rgba(0, 0, 0, 0.85); color: #fff; padding: 14px 18px;
+      border-radius: 12px; font-size: 13px; line-height: 1.6;
+      backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,0.2);
+    }
+
+    /* 右上角 WebCam 視訊鏡頭預覽 */
+    #webcamContainer {
+      position: fixed; top: 16px; right: 16px; z-index: 999;
+      width: 220px; height: 165px; border-radius: 12px; overflow: hidden;
+      border: 2px solid #00ff00; box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+      background: #111;
+    }
+    #webcam { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+    
+    /* 螢幕中央準星 */
+    #crosshair {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      width: 24px; height: 24px; border: 2px solid rgba(0, 255, 255, 0.8);
+      border-radius: 50%; pointer-events: none; z-index: 998;
+    }
+    #crosshair::after {
+      content: ''; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      width: 4px; height: 4px; background: #00ffff; border-radius: 50%;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="hud">
+    <b>🏙️ Sky 100 (ICC) 樓頂滑翔起飛</b><br>
+    高度 (Alt)：<span id="altTxt" style="color:#00e5ff; font-weight:bold;">420 m</span><br>
+    空速 (Speed)：<span id="spdTxt" style="color:#00ff00; font-weight:bold;">50 km/h</span><br>
+    控制桿角度 (Roll)：<span id="rollTxt" style="color:#ffea00;">0°</span><br>
+    狀態：<span id="statusTxt" style="color:#aaa;">啟動鏡頭中...</span>
+  </div>
+
+  <div id="crosshair"></div>
+
+  <!-- 鏡頭監控視窗 -->
+  <div id="webcamContainer">
+    <video id="webcam" autoplay playsinline muted></video>
+  </div>
+
+  <div id="cesiumContainer"></div>
+
+  <script>
+    // ⚠️ 請填入你在 Cesium Ion 申請的免費 Token ⚠️
+    Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9';
+
+    const viewer = new Cesium.Viewer('cesiumContainer', {
+      animation: false, timeline: false, baseLayerPicker: false,
+      geocoder: false, homeButton: false, sceneModePicker: false,
+      navigationHelpButton: false, infoBox: false, selectionIndicator: false
+    });
+
+    // 1. 載入 Google 3D 實景地圖
+    async function init3D() {
+      try {
+        const tileset = await Cesium.createGooglePhotorealistic3DTileset();
+        viewer.scene.primitives.add(tileset);
+      } catch (err) { console.error("3D 載入失敗:", err); }
+    }
+    init3D();
+
+    // 2. 設定起飛點：Sky 100 / ICC 頂樓高空 (經度: 114.1601°, 緯度: 22.3034°)
+    let planeLon = 114.16010; 
+    let planeLat = 22.30340;
+    let planeAlt = 420.0;     // 高度 420 米 (高於 ICC 頂樓 390m)
+
+    let heading = 150.0;      // 初始航向：面向維多利亞港及中環天際線
+    let pitch = -3.0;         // 微微俯衝出發
+    let roll = 0.0;           // 機翼傾角
+    let airspeed = 0.00014;   // 起飛初速 (約 50 km/h)
+
+    function updateFlightCamera() {
+      viewer.camera.setView({
+        destination: Cesium.Cartesian3.fromDegrees(planeLon, planeLat, planeAlt),
+        orientation: {
+          heading: Cesium.Math.toRadians(heading),
+          pitch: Cesium.Math.toRadians(pitch),
+          roll: Cesium.Math.toRadians(roll)
+        }
+      });
+
+      // 更新 HUD 面板數據
+      document.getElementById('altTxt').innerText = `${Math.round(planeAlt)} m`;
+      document.getElementById('spdTxt').innerText = `${(airspeed * 360000).toFixed(0)} km/h`;
+      document.getElementById('rollTxt').innerText = `${Math.round(roll)}°`;
+    }
+
+    // 3. MediaPipe 雙手握棍追蹤邏輯
+    const videoElement = document.getElementById('webcam');
+    const statusTxt = document.getElementById('statusTxt');
+
+    const hands = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    hands.setOptions({
+      maxNumHands: 2,           // 捕捉雙手握棍
+      modelComplexity: 1,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+
+    hands.onResults((results) => {
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length >= 2) {
+        statusTxt.innerText = "已連線！手持控制桿中";
+        statusTxt.style.color = "#00ff00";
+
+        // 取得雙手中心點
+        const hand1 = results.multiHandLandmarks[0][9];
+        const hand2 = results.multiHandLandmarks[1][9];
+
+        // 計算左右手上下的相對落差，得出木棍傾斜角 (Roll)
+        const dx = hand2.x - hand1.x;
+        const dy = hand2.y - hand1.y;
+        
+        let angle = Math.atan2(dy, dx) * (180 / Math.PI);
+        if (angle > 90) angle -= 180;
+        if (angle < -90) angle += 180;
+
+        roll = -angle * 1.5; // 控制轉向機翼角度
+
+        // 雙手整體向上舉高/壓低 -> 控制俯仰角 (Pitch)
+        const avgY = (hand1.y + hand2.y) / 2;
+        pitch = (avgY - 0.5) * 40.0;
+
+      } else if (results.multiHandLandmarks && results.multiHandLandmarks.length === 1) {
+        statusTxt.innerText = "請用「雙手」握住木棍兩端";
+        statusTxt.style.color = "#ffea00";
+      } else {
+        statusTxt.innerText = "請將木棍放入鏡頭範圍";
+        statusTxt.style.color = "#ff3333";
+        roll *= 0.85; // 沒偵測到手時自動回正
+      }
+    });
+
+    // 啟動 Webcam 鏡頭
+    const camera = new Camera(videoElement, {
+      onFrame: async () => { await hands.send({ image: videoElement }); },
+      width: 320, height: 240
+    });
+    camera.start();
+
+    // 4. 滑翔機飛行物理循環
+    viewer.clock.onTick.addEventListener(() => {
+      // 1. 傾角 (Roll) 帶動航向 (Heading) 轉向
+      heading += roll * 0.06;
+
+      // 2. 俯仰角 (Pitch) 影響速度與高度變化
+      if (pitch < 0) {
+        // 俯衝：下沉並加速
+        airspeed += Math.abs(pitch) * 0.000000012;
+        planeAlt += pitch * 0.18; 
+      } else {
+        // 拉升：爬升並減速
+        airspeed -= pitch * 0.000000012;
+        planeAlt += pitch * 0.12;
+      }
+
+      // 自然重力下沉
+      planeAlt -= 0.06;
+
+      // 最小失速極限速度
+      if (airspeed < 0.00006) airspeed = 0.00006;
+
+      // 3. 計算 3D 座標推進
+      const radH = Cesium.Math.toRadians(heading);
+      planeLon += Math.sin(radH) * airspeed;
+      planeLat += Math.cos(radH) * airspeed;
+
+      updateFlightCamera();
+    });
+  </script>
+</body>
+</html>
