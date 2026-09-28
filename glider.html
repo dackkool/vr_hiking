@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sky 100 天際線起飛 - DIY 體感木棍滑翔機</title>
+
+  <!-- 載入 Cesium 3D 實景引擎 -->
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Cesium.js"></script>
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+
+  <!-- 載入 Google MediaPipe Hands 手部/木棍角度追蹤 -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    html, body, #cesiumContainer { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: sans-serif; }
+
+    /* 高空飛行儀表板 HUD */
+    #hud {
+      position: fixed; top: 16px; left: 16px; z-index: 999;
+      background: rgba(0, 0, 0, 0.85); color: #fff; padding: 14px 18px;
+      border-radius: 12px; font-size: 13px; line-height: 1.6;
+      backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,0.2);
+    }
+
+    /* 右上角 WebCam 視訊鏡頭預覽 */
+    #webcamContainer {
+      position: fixed; top: 16px; right: 16px; z-index: 999;
+      width: 220px; height: 165px; border-radius: 12px; overflow: hidden;
+      border: 2px solid #00ff00; box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+      background: #111;
+    }
+    #webcam { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+    
+    /* 螢幕中央準星 */
+    #crosshair {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      width: 24px; height: 24px; border: 2px solid rgba(0, 255, 255, 0.8);
+      border-radius: 50%; pointer-events: none; z-index: 998;
+    }
+    #crosshair::after {
+      content: ''; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      width: 4px; height: 4px; background: #00ffff; border-radius: 50%;
+    }
+
+    /* 全螢幕遮罩層（通用樣式） */
+    .overlay {
+      position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+      background: rgba(0, 0, 0, 0.85); z-index: 2000;
+      display: flex; flex-direction: column; justify-content: center; align-items: center;
+      color: #fff; text-align: center; padding: 20px; backdrop-filter: blur(10px);
+    }
+
+    .overlay h1 { font-size: 32px; margin-bottom: 20px; color: #00e5ff; text-shadow: 0 0 10px rgba(0,229,255,0.5); }
+    .overlay p { font-size: 16px; line-height: 1.8; margin-bottom: 12px; max-width: 500px; color: #ddd; }
+    .overlay ul { text-align: left; margin: 15px 0 25px 0; font-size: 15px; line-height: 2; color: #fff; }
+    
+    /* 按鈕樣式 */
+    .btn {
+      background: linear-gradient(135deg, #00e5ff, #0077ff);
+      color: #fff; border: none; padding: 14px 40px; font-size: 20px; font-weight: bold;
+      border-radius: 30px; cursor: pointer; transition: all 0.2s ease;
+      box-shadow: 0 4px 20px rgba(0, 229, 255, 0.4);
+    }
+    .btn:hover { transform: scale(1.05); box-shadow: 0 6px 25px rgba(0, 229, 255, 0.7); }
+    .btn:active { transform: scale(0.98); }
+
+    /* 隱藏元素 */
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+
+  <!-- 1. 開始遊戲說明面板 -->
+  <div id="startOverlay" class="overlay">
+    <h1> Sky 100 滑翔飛行體驗</h1>
+    <p>歡迎來到 Sky 100 頂樓！請確保視訊鏡頭已開啟，並按照以下指示操作：</p>
+    <ul>
+      <li>✊ <b>手握雙拳/木棍：</b> 雙手舉起放置於鏡頭前方。</li>
+      <li> Tilt <b>傾斜轉向：</b> 雙手高低傾斜可控制滑翔機左右轉向。</li>
+      <li>↔️ <b>高低俯仰：</b> 雙手同時舉高或壓低可控制俯衝與爬升。</li>
+      <li>💥 <b>避開障礙物：</b> 請勿撞擊地面或高樓，否則飛行將會結束！</li>
+    </ul>
+    <button id="startBtn" class="btn">START (開始飛行)</button>
+  </div>
+
+  <!-- 2. 遊戲結束/撞擊面板 -->
+  <div id="gameOverOverlay" class="overlay hidden">
+    <h1 style="color: #ff3333; text-shadow: 0 0 10px rgba(255,51,51,0.5);">💥 CRASH! 飛行結束</h1>
+    <p>你的滑翔機撞到了地面或障礙物！</p>
+    <p style="font-size: 14px; color: #aaa; margin-bottom: 25px;">按下下方按鈕重新回到 Sky 100 頂樓起飛。</p>
+    <button id="retryBtn" class="btn" style="background: linear-gradient(135deg, #ff4b4b, #ff0055);">RETRY (重新起飛)</button>
+  </div>
+
+  <div id="hud">
+    <b>🏙️ Sky 100 (ICC) 樓頂滑翔起飛</b><br>
+    高度 (Alt)：<span id="altTxt" style="color:#00e5ff; font-weight:bold;">420 m</span><br>
+    空速 (Speed)：<span id="spdTxt" style="color:#00ff00; font-weight:bold;">50 km/h</span><br>
+    控制桿角度 (Roll)：<span id="rollTxt" style="color:#ffea00;">0°</span><br>
+    狀態：<span id="statusTxt" style="color:#aaa;">準備中...</span>
+  </div>
+
+  <div id="crosshair"></div>
+
+  <!-- 鏡頭監控視窗 -->
+  <div id="webcamContainer">
+    <video id="webcam" autoplay playsinline muted></video>
+  </div>
+
+  <div id="cesiumContainer"></div>
+
+  <script>
+    // ⚠️ 請填入你在 Cesium Ion 申請的免費 Token ⚠️
+    Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJub25jZSI6Im1XckF5T2RaNG5QbEEzWGIiLCJqdGkiOiJhZThlOTdhMy0zOGYyLTQxY2EtOTU3YS0xYTVjYWM4ODdmYWEiLCJpZCI6NTA3Mzc1LCJzdWIiOiJkYWNra29vbCIsImlzcyI6Imh0dHBzOi8vYXBpLmNlc2l1bS5jb20iLCJhdWQiOiJVbnRpdGxlZCIsImlhdCI6MTc5MDMyOTUyNX0.Nslgm1XCa91xOEaAqb9l0iOFnkyyez9yyjN-ENJ53kI';
+
+    const viewer = new Cesium.Viewer('cesiumContainer', {
+      animation: false, timeline: false, baseLayerPicker: false,
+      geocoder: false, homeButton: false, sceneModePicker: false,
+      navigationHelpButton: false, infoBox: false, selectionIndicator: false
+    });
+
+    let google3DTileset = null;
+
+    // 1. 載入 Google 3D 實景地圖
+    async function init3D() {
+      try {
+        google3DTileset = await Cesium.createGooglePhotorealistic3DTileset();
+        viewer.scene.primitives.add(google3DTileset);
+      } catch (err) { console.error("3D 載入失敗:", err); }
+    }
+    init3D();
+
+    // 起飛初始參數定義
+    const INIT_LON = 114.16010;
+    const INIT_LAT = 22.30340;
+    const INIT_ALT = 420.0;
+    const INIT_HEADING = 150.0;
+    const INIT_PITCH = -3.0;
+    const INIT_ROLL = 0.0;
+    const INIT_SPEED = 0.00014;
+
+    let planeLon = INIT_LON; 
+    let planeLat = INIT_LAT;
+    let planeAlt = INIT_ALT;
+
+    let heading = INIT_HEADING;
+    let pitch = INIT_PITCH;
+    let roll = INIT_ROLL;
+    let airspeed = INIT_SPEED;
+
+    let isPlaying = false; // 遊戲進行狀態標籤
+
+    function resetFlightState() {
+      planeLon = INIT_LON;
+      planeLat = INIT_LAT;
+      planeAlt = INIT_ALT;
+      heading = INIT_HEADING;
+      pitch = INIT_PITCH;
+      roll = INIT_ROLL;
+      airspeed = INIT_SPEED;
+      updateFlightCamera();
+    }
+
+    function updateFlightCamera() {
+      viewer.camera.setView({
+        destination: Cesium.Cartesian3.fromDegrees(planeLon, planeLat, planeAlt),
+        orientation: {
+          heading: Cesium.Math.toRadians(heading),
+          pitch: Cesium.Math.toRadians(pitch),
+          roll: Cesium.Math.toRadians(roll)
+        }
+      });
+
+      // 更新 HUD 面板數據
+      document.getElementById('altTxt').innerText = `${Math.round(planeAlt)} m`;
+      document.getElementById('spdTxt').innerText = `${(airspeed * 360000).toFixed(0)} km/h`;
+      document.getElementById('rollTxt').innerText = `${Math.round(roll)}°`;
+    }
+
+    // 全螢幕切換
+    function requestFullScreen() {
+      const docEl = document.documentElement;
+      if (docEl.requestFullscreen) {
+        docEl.requestFullscreen().catch(err => console.log(err));
+      } else if (docEl.mozRequestFullScreen) {
+        docEl.mozRequestFullScreen();
+      } else if (docEl.webkitRequestFullscreen) {
+        docEl.webkitRequestFullscreen();
+      } else if (docEl.msRequestFullscreen) {
+        docEl.msRequestFullscreen();
+      }
+    }
+
+    // 觸發遊戲結束 (CRASH)
+    function triggerGameOver() {
+      isPlaying = false;
+      document.getElementById('gameOverOverlay').classList.remove('hidden');
+    }
+
+    // UI 按鈕事件監聽
+    document.getElementById('startBtn').addEventListener('click', () => {
+      requestFullScreen();
+      document.getElementById('startOverlay').classList.add('hidden');
+      resetFlightState();
+      isPlaying = true;
+    });
+
+    document.getElementById('retryBtn').addEventListener('click', () => {
+      requestFullScreen();
+      document.getElementById('gameOverOverlay').classList.add('hidden');
+      resetFlightState();
+      isPlaying = true;
+    });
+
+    // MediaPipe 雙手握棍追蹤邏輯
+    const videoElement = document.getElementById('webcam');
+    const statusTxt = document.getElementById('statusTxt');
+
+    const hands = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    hands.setOptions({
+      maxNumHands: 2,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+
+    hands.onResults((results) => {
+      if (!isPlaying) return; // 沒開始遊戲時不更新姿態
+
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length >= 2) {
+        statusTxt.innerText = "已連線！手持控制桿中";
+        statusTxt.style.color = "#00ff00";
+
+        const hand1 = results.multiHandLandmarks[0][9];
+        const hand2 = results.multiHandLandmarks[1][9];
+
+        const dx = hand2.x - hand1.x;
+        const dy = hand2.y - hand1.y;
+        
+        let angle = Math.atan2(dy, dx) * (180 / Math.PI);
+        if (angle > 90) angle -= 180;
+        if (angle < -90) angle += 180;
+
+        roll = -angle * 1.5;
+
+        const avgY = (hand1.y + hand2.y) / 2;
+        pitch = (avgY - 0.5) * 40.0;
+
+      } else if (results.multiHandLandmarks && results.multiHandLandmarks.length === 1) {
+        statusTxt.innerText = "請用「雙手」握住木棍兩端";
+        statusTxt.style.color = "#ffea00";
+      } else {
+        statusTxt.innerText = "請將木棍放入鏡頭範圍";
+        statusTxt.style.color = "#ff3333";
+        roll *= 0.85;
+      }
+    });
+
+    // 啟動 Webcam 鏡頭
+    const camera = new Camera(videoElement, {
+      onFrame: async () => { await hands.send({ image: videoElement }); },
+      width: 320, height: 240
+    });
+    camera.start();
+
+    // 4. 滑翔機飛行物理與碰撞循環
+    viewer.clock.onTick.addEventListener(() => {
+      if (!isPlaying) return; // 遊戲結束或未開始時暫停物理計算
+
+      // 1. 傾角 (Roll) 帶動航向 (Heading) 轉向
+      heading += roll * 0.06;
+
+      // 2. 俯仰角 (Pitch) 影響速度與高度變化
+      if (pitch < 0) {
+        airspeed += Math.abs(pitch) * 0.000000012;
+        planeAlt += pitch * 0.18; 
+      } else {
+        airspeed -= pitch * 0.000000012;
+        planeAlt += pitch * 0.12;
+      }
+
+      // 自然重力下沉
+      planeAlt -= 0.06;
+
+      // 最小失速極限速度
+      if (airspeed < 0.00006) airspeed = 0.00006;
+
+      // 3. 計算 3D 座標推進
+      const radH = Cesium.Math.toRadians(heading);
+      planeLon += Math.sin(radH) * airspeed;
+      planeLat += Math.cos(radH) * airspeed;
+
+      updateFlightCamera();
+
+      // 4. 碰撞檢測 (Collision Detection)
+      // (A) 最基本的地面保底判定 (高度小於等於 0 米)
+      if (planeAlt <= 0) {
+        triggerGameOver();
+        return;
+      }
+
+      // (B) 結合 Cesium 3D Tiles 實體地形/建築物高度碰撞檢測
+      const cartographic = Cesium.Cartographic.fromDegrees(planeLon, planeLat);
+      const groundHeight = viewer.scene.sampleHeight(cartographic);
+
+      if (groundHeight !== undefined && planeAlt <= groundHeight + 2.0) {
+        // 當滑翔機高度低於該經緯度對應的 3D 建築或地形高度 (+2米緩衝) 時判定撞擊
+        triggerGameOver();
+      }
+    });
+  </script>
+</body>
+</html>
