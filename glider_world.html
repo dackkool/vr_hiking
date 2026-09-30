@@ -283,7 +283,6 @@
     });
 
     document.getElementById('retryBtn').addEventListener('click', () => {
-      requestFullScreen();
       localStorage.setItem('autoStartFlight', 'true');
       location.reload();
     });
@@ -292,6 +291,7 @@
     window.addEventListener('load', () => {
       if (localStorage.getItem('autoStartFlight') === 'true') {
         localStorage.removeItem('autoStartFlight');
+        requestFullScreen();
         document.getElementById('startOverlay').classList.add('hidden');
         
         startCountdownSequence(() => {
