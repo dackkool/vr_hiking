@@ -283,9 +283,9 @@
     });
 
     document.getElementById('retryBtn').addEventListener('click', () => {
+      requestFullScreen();
       localStorage.setItem('autoStartFlight', 'true');
       location.reload();
-      requestFullScreen();
     });
 
     // 檢查頁面是否為切換地點/RETRY 後的重載
